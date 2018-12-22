@@ -1,4 +1,4 @@
-#include "json.hpp"
+﻿#include "json.hpp"
 #include <math.h>
 #include <uWS/uWS.h>
 #include <chrono>
@@ -11,6 +11,10 @@
 
 // for convenience
 using json = nlohmann::json;
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
+using std::string;
+
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -40,6 +44,38 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
   }
   return result;
 }
+
+
+void transformMapToVehicleCoordSys(std::vector<double> &ptsx, std::vector<double> &ptsy, double psi, double px, double py, Eigen::VectorXd &xvals, Eigen::VectorXd &yvals)
+{
+    std::vector<double> temp_x, temp_y;
+    for (size_t i = 0; i < ptsx.size(); i++)
+    {
+        Eigen::MatrixXd rot(2, 2), inpts(2, 1), xformpts(2, 1);
+        rot << cos(-psi), -sin(-psi),
+            sin(-psi), cos(psi);
+        //std::cout << "rot: " << rot << std::endl;
+        inpts << ptsx[i] - px, ptsy[i] - py;
+        //std::cout << "inpts: " << inpts << std::endl;
+        xformpts = rot * inpts;
+        //std::cout << "xformpts: " << xformpts << std::endl;
+
+        temp_x.push_back(xformpts (0, 0));
+        temp_y.push_back(xformpts(1, 0));
+        //double shift_x = ptsx[i] - px;
+        //double shift_y = ptsy[i] - py;
+
+        //ptsx[i] = shift_x * cos(0 - psi) - shift_y * sin(0 - psi);
+        //ptsy[i] = shift_x * sin(0 - psi) - shift_y * cos(0 - psi);
+
+        //temp_x.push_back(ptsx[i]);
+        //temp_y.push_back(ptsy[i]);
+
+    }
+    xvals = Eigen::Map<Eigen::VectorXd>(temp_x.data(), temp_x.size());
+    yvals = Eigen::Map<Eigen::VectorXd>(temp_y.data(), temp_y.size());
+}
+
 
 // Fit a polynomial.
 // Adapted from
@@ -77,7 +113,7 @@ int main() {
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+    std::cout << sdata << std::endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -85,41 +121,89 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
+          std::vector<double> ptsx = j[1]["ptsx"];
+          std::vector<double> ptsy = j[1]["ptsy"];
           double px = j[1]["x"];
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
+          Eigen::VectorXd xvals(ptsx.size());
+          Eigen::VectorXd yvals(ptsy.size());
+          transformMapToVehicleCoordSys(ptsx, ptsy, psi, px, py, xvals, yvals);
+          //std::cout << "xvals: " << xvals << std::endl;
+          //std::cout << "yvals: " << yvals << std::endl;
+
+          // Using polyfit function generate a 3rd order polynomial equation for the 
+          // input x and y values representing waypoints
+          auto poly_coeff = polyfit(xvals, yvals, 3);
+          //std::cout << "poly_coeff: " << poly_coeff << std::endl;
+
+          // calculate initial cross track error based on the coefficients obtainted
+          // first compute y value for given x which is zero in this case
+          // and then subtract f(x) which is also zero
+          // cte(t)​=y(t)​−f(x(t​))
+          double cte = polyeval(poly_coeff, 0) - 0;
+          //std::cout << "cte: " << cte << std::endl;
+          
+          // calculate initial orientation error value
+          // psi_dest​ can be calculated as the tangential angle of the polynomial f evaluated 
+          // at x(t), arctan(f′(x(t))). f′ is the derivative of the polynomial.
+          // epsi(t)​=psi(t)​−psi_dest​ where psi(t) is zero in this case
+          // epsi(t)​=psi(t) - arctac(3*poly_coeff[3]*pow(px ,2) + 2*px*poly_coeff[2] + poly_coeff[1])
+          // where px is zero for the initial state
+          double epsi = 0 - atan(3 * poly_coeff[3] * pow(0, 2) + 2 * 0 * poly_coeff[2] + poly_coeff[1]);
+          //std::cout << "epsi: " << epsi << std::endl;
+          double steer_value = j[1]["steering_angle"];
+          double throttle_value = j[1]["throttle"];// TODO could be used for latency
+          
+
+          Eigen::VectorXd state(6);
+          state << 0, 0, 0, v, cte, epsi;
+
           /*
-          * TODO: Calculate steering angle and throttle using MPC.
-          *
+          * Calculate steering angle and throttle using MPC.
           * Both are in between [-1, 1].
-          *
           */
-          double steer_value;
-          double throttle_value;
+          auto vars = mpc.Solve(state, poly_coeff);
+
+          //Display the waypoints/reference line
+          std::vector<double> next_x_vals;
+          std::vector<double> next_y_vals;
+          // set points for reference line
+          double poly_inc = 2.5;
+          int num_points = 25;
+          for (int i = 0; i < num_points; i++)
+          {
+              next_x_vals.push_back(poly_inc*i);
+              next_y_vals.push_back(polyeval(poly_coeff, poly_inc*i));
+          }
+
+          //Display the MPC predicted trajectory 
+          std::vector<double> mpc_x_vals;
+          std::vector<double> mpc_y_vals;
+          // set points for MPC calculated value 
+          for (int i = 0; i < vars.size(); i++)
+          {
+              if (i % 2 == 0)
+                  mpc_x_vals.push_back(vars[i]);
+              else
+                  mpc_y_vals.push_back(vars[i]);
+          }
+
+          double Lf = 2.67;
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = throttle_value;
-
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
+          msgJson["steering_angle"] = vars[0]/(deg2rad(25));   // * Lf
+          msgJson["throttle"] = vars[1];
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
 
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
-
-          //Display the waypoints/reference line
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
@@ -139,7 +223,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          //std::this_thread::sleep_for(std::chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
