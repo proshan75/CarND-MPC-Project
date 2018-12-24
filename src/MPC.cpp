@@ -23,9 +23,9 @@ double dt = 0.1;
 const double Lf = 2.67;
 
 // Reference velocity for vehicle
-double ref_v = 40;
-double ref_cte = 0;
-double ref_epsi = 0;
+double ref_v = 100;
+double ref_cte = 0.1;
+double ref_epsi = 0.1;
 
 // Starting indices for state and actuator variables initialized
 size_t x_start = 0;
@@ -50,26 +50,25 @@ public:
         // The cost is stored is the first element of `fg`.
         fg[0] = 0;
 
-        //std::cout << __func__ << " operator" << std::endl;
-
         // Reference State Cost
         // The part of the cost based on the reference state.
+
         for (size_t t = 0; t < N; t++) {
-            fg[0] += 2000* CppAD::pow(vars[cte_start + t] - ref_cte, 2);
+            fg[0] += 2500* CppAD::pow(vars[cte_start + t] - ref_cte, 2);
             fg[0] += 2000* CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
-            fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
+            fg[0] += 5*CppAD::pow(vars[v_start + t] - ref_v, 2);
         }
 
         // Minimize the use of actuators.
         for (size_t t = 0; t < N - 1; t++) {
-            fg[0] +=  5*CppAD::pow(vars[delta_start + t], 2);
-            fg[0] +=  5*CppAD::pow(vars[a_start + t], 2);
+            fg[0] +=  10*CppAD::pow(vars[delta_start + t], 2);
+            fg[0] +=  50*CppAD::pow(vars[a_start + t], 2);
         }
 
         // Minimize the value gap between sequential actuations.
         for (size_t t = 0; t < N - 2; t++) {
             fg[0] +=  200*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-            fg[0] += 10*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += 20*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //
@@ -246,7 +245,7 @@ std::vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     options += "Sparse  true        reverse\n";
     // NOTE: Currently the solver has a maximum time limit of 0.5 seconds.
     // Change this as you see fit.
-    options += "Numeric max_cpu_time          0.5\n";
+    options += "Numeric max_cpu_time          0.4\n";
 
     // place to return solution
     CppAD::ipopt::solve_result<Dvector> solution;
@@ -278,16 +277,11 @@ std::vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     result.push_back(solution.x[delta_start]);
     result.push_back(solution.x[a_start]);
 
-    //std::cout << " A ..... getting here ........" << std::endl;
-
     for (i = 0; i < N; i++)
     {
         result.push_back(solution.x[x_start + i]);
         result.push_back(solution.x[y_start + i]);
     }
-
-    //std::cout << "B..... getting here ........" << std::endl;
-
 
     return result;
 }
