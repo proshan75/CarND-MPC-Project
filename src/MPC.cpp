@@ -7,7 +7,7 @@ using CppAD::AD;
 using std::string;
 
 // TODO: Set the timestep length and duration
-size_t N = 10;
+size_t N = 9;
 double dt = 0.1;
 
 // This value assumes the model presented in the classroom is used.
@@ -23,9 +23,11 @@ double dt = 0.1;
 const double Lf = 2.67;
 
 // Reference velocity for vehicle
-double ref_v = 100;
-double ref_cte = 0.1;
-double ref_epsi = 0.1;
+double ref_v = 70;
+double ref_cte = 0.0;
+double ref_epsi = 0.0;
+AD<double> previous_delta0;
+AD<double> previous_a0;
 
 // Starting indices for state and actuator variables initialized
 size_t x_start = 0;
@@ -55,19 +57,19 @@ public:
 
         for (size_t t = 0; t < N; t++) {
             fg[0] += 2500* CppAD::pow(vars[cte_start + t] - ref_cte, 2);
-            fg[0] += 2000* CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
-            fg[0] += 5*CppAD::pow(vars[v_start + t] - ref_v, 2);
+            fg[0] += 5000* CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
+            fg[0] += 2*CppAD::pow(vars[v_start + t] - ref_v, 2);
         }
 
         // Minimize the use of actuators.
         for (size_t t = 0; t < N - 1; t++) {
-            fg[0] +=  10*CppAD::pow(vars[delta_start + t], 2);
+            fg[0] +=  40*CppAD::pow(vars[delta_start + t], 2);
             fg[0] +=  50*CppAD::pow(vars[a_start + t], 2);
         }
 
         // Minimize the value gap between sequential actuations.
         for (size_t t = 0; t < N - 2; t++) {
-            fg[0] +=  200*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] +=  800*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
             fg[0] += 20*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
@@ -117,6 +119,7 @@ public:
 
             AD<double> delta0 = vars[delta_start + t - 1];
             AD<double> a0 = vars[a_start + t - 1];
+
             //std::cout << "delta0 " << delta0 << " a0 " << a0 << std::endl;
 
             AD<double> f0 = coeffs[3] * CppAD::pow(x0, 3) + coeffs[2] * CppAD::pow(x0, 2) + coeffs[1] * x0 + coeffs[0];
@@ -193,8 +196,8 @@ std::vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     // The upper and lower limits of delta are set to -25 and 25
     // degrees (values in radians).
     for (i = delta_start; i < a_start; i++) {
-        vars_lowerbound[i] = -0.436332; // *Lf
-        vars_upperbound[i] = 0.436332; // *Lf
+        vars_lowerbound[i] = -0.436332* Lf; // *Lf
+        vars_upperbound[i] = 0.436332* Lf; // *Lf
     }
 
     // Acceleration/decceleration upper and lower limits.
@@ -245,7 +248,7 @@ std::vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     options += "Sparse  true        reverse\n";
     // NOTE: Currently the solver has a maximum time limit of 0.5 seconds.
     // Change this as you see fit.
-    options += "Numeric max_cpu_time          0.4\n";
+    options += "Numeric max_cpu_time          0.3\n";
 
     // place to return solution
     CppAD::ipopt::solve_result<Dvector> solution;

@@ -157,9 +157,19 @@ int main() {
           double steer_value = j[1]["steering_angle"];
           double throttle_value = j[1]["throttle"];// TODO could be used for latency
           
+          double Lf = 2.67;
+          double dt = 0.1;
+
+          double delay_x = v * dt;
+          double delay_y = 0;
+          double delay_psi = -v * steer_value / Lf * dt;
+          double delay_v = v + throttle_value * dt;
+          double delay_cte = cte + v * sin(epsi) * dt;
+          double delay_epsi = epsi - v * steer_value / Lf * dt;
 
           Eigen::VectorXd state(6);
-          state << 0, 0, 0, v, cte, epsi;
+          //state << 0, 0, 0, v, cte, epsi;
+          state << delay_x, delay_y, delay_psi, delay_v, delay_cte, delay_epsi;
 
           /*
           * Calculate steering angle and throttle using MPC.
@@ -183,7 +193,7 @@ int main() {
           std::vector<double> mpc_x_vals;
           std::vector<double> mpc_y_vals;
           // set points for MPC calculated value 
-          for (int i = 0; i < vars.size(); i++)
+          for (size_t i = 0; i < vars.size(); i++)
           {
               if (i % 2 == 0)
                   mpc_x_vals.push_back(vars[i]);
@@ -191,12 +201,10 @@ int main() {
                   mpc_y_vals.push_back(vars[i]);
           }
 
-          double Lf = 2.67;
-
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
-          msgJson["steering_angle"] = vars[0]/(-deg2rad(25));   // * Lf
+          msgJson["steering_angle"] = vars[0]/(-deg2rad(25)* Lf);   // * Lf
           msgJson["throttle"] = vars[1];
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
@@ -223,7 +231,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
