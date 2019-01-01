@@ -144,6 +144,7 @@ int main() {
                     double Lf = 2.67;
                     double dt = 0.1;
 
+                    // initial state computed using vehicle model to support latency
                     double delay_x = v * dt;
                     double delay_y = 0;
                     double delay_psi = -(v / Lf) * steer_value  * dt;

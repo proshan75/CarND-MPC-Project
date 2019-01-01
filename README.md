@@ -1,7 +1,161 @@
-# CarND-Controls-MPC
-Self-Driving Car Engineer Nanodegree Program
+[//]: # (Image References)
+[video1]: ./videos/12_0.1_no_Latency.avi
+[video2]: ./videos/9_0.1_100ms_Latency.avi
+
+
+# A Vehicle driving using MPC controller
+Udacity's Self-Driving Car Engineer Nanodegree Program, last project for second term
 
 ---
+
+## Project Introduction
+
+This project implements a MPC, Model Predictive controller, in C++ to maneuver a vehicle in a simulated environment on a track. The project implementation is described in following four steps:
+
+1. The model
+2. Timestep Length and Elapsed Duration (N & dt)
+3. Polynomial Fitting and MPC Preprocessing
+4. Model Predictive Control with Latency
+
+## MPC Basics
+
+In this approach, the model is optimized to reduce the error in the cost equations. In case of a vehicle, the error is minimized to drive it at a reference speed or as close to reference lane defined by waypoints.
+
+1. The model state is defined as _[x, y, ψ, v, cte, eψ]_ and actuator as _[δ, a]_ where
+* **x**: X position
+* **y**: Y position
+* **ψ**: heading/orientation
+* **v**: velocity
+* **cte**: cross-track error
+* **eψ**: heading/orientation error
+
+and
+
+* **δ**: delta steering angle
+* **a**: actuator as throttle or braking
+
+The MPC controller's goal is to minimize cte and eψ. The cost function measures how far the model state is from the goal.
+
+Update equations are coded as below:
+
+```
+            // Setup the rest of the model constraints:
+            // x(t+1)​=x(t) + v(t)​*cos(psi(t))∗dt
+            fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+
+            // y(t+1)=y(t) + v(t)*sin(psi(t))∗dt
+            fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+
+            // psi(t+1)=psi(t) + ((v(t)/Lf)*delta(t)∗dt)
+            fg[1 + psi_start + t] = psi1 - (psi0 + (v0 / Lf) * delta0 * dt);
+
+            // v(t+1)=v(t)+a(t)∗dt
+            fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
+
+            // cte(t+1)=f(x(t))−y(t)+(v(t)*sin(epsi(t))*dt)
+            fg[1 + cte_start + t] = cte1 - (f0 - y0 + (v0 * CppAD::sin(epsi0) * dt));
+
+            // epsi(t+1)=psi(t)−psides(t)+((v(t)/Lf)*delta(t)*dt)
+            fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + (v0 / Lf) * delta0 * dt);
+```
+
+2. Timestep Length (_dt_) and number of timesteps (_N_) is used to compute prediction horizon for the elapsed Duration (_T_). The values are set with trial and error approach, observing how the vehicle drives. I started with N with 12 and dt as 0.1. Increasing N caused the vehicle to be unstable especially during turns and further zigzag ride as it tries to get back to the reference line (shown here in ![video](./videos/12_0.1_no_Latency.avi)). I tried reducing dt in that case, though it caused further degraded performance as it required more computation. Later when changes made to support latency, I settled on following parameters. Other than these two parameters I also changed  `max_cpu_time` to `0.3`. The values are coded as:
+
+```
+            size_t N = 9;
+            double dt = 0.1;
+```
+
+Various factors used in evaluating the cost function using Ipopt optimizer are also adjusted. These factors work as a weights to influence the cost function. The values are coded as:
+
+```
+        double cte_start_factor = 2500;
+        double epsi_start_factor = 5000;
+        double v_start_factor = 2;
+        double delta_start_factor = 40;
+        double a_start_factor = 50;
+        double delta_start_diff_factor = 500;
+        double a_start_diff_factor = 25;
+
+        for (size_t t = 0; t < N; t++) {
+            fg[0] += cte_start_factor * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
+            fg[0] += epsi_start_factor * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
+            fg[0] += v_start_factor * CppAD::pow(vars[v_start + t] - ref_v, 2);
+        }
+
+        // Minimize the use of actuators.
+        for (size_t t = 0; t < N - 1; t++) {
+            fg[0] += delta_start_factor * CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += a_start_factor * CppAD::pow(vars[a_start + t], 2);
+        }
+
+        // Minimize the value gap between sequential actuations.
+        for (size_t t = 0; t < N - 2; t++) {
+            fg[0] += delta_start_diff_factor * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] += a_start_diff_factor * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+        }
+```
+
+3. Polynomial Fitting and MPC Preprocessing is required for calculating the initial cross track error (cte) and orientation error (eψ) values. However before fitting a polynomial to the input waypoints they needs to be processed as the server returns the waypoints using the map's coordinate system. It needs to be transformed to the vehicle's coordinate system. Using rotation matrix multiplication in the function below transformation of the input coordinates is performed:
+
+```
+        void transformMapToVehicleCoordSys(std::vector<double> &ptsx, std::vector<double> &ptsy, double psi, double px, double py, Eigen::VectorXd &xvals, Eigen::VectorXd &yvals)
+        {
+            std::vector<double> temp_x, temp_y;
+            for (size_t i = 0; i < ptsx.size(); i++)
+            {
+                Eigen::MatrixXd rot(2, 2), inpts(2, 1), xformpts(2, 1);
+                rot << cos(-psi), -sin(-psi),
+                    sin(-psi), cos(psi);
+                inpts << ptsx[i] - px, ptsy[i] - py;
+                xformpts = rot * inpts;
+
+                temp_x.push_back(xformpts(0, 0));
+                temp_y.push_back(xformpts(1, 0));
+            }
+            xvals = Eigen::Map<Eigen::VectorXd>(temp_x.data(), temp_x.size());
+            yvals = Eigen::Map<Eigen::VectorXd>(temp_y.data(), temp_y.size());
+        }
+```
+
+Following code shows the call to transform and polyfit function to obtain 3rd degree polynomial coefficients.
+
+```
+            transformMapToVehicleCoordSys(ptsx, ptsy, psi, px, py, xvals, yvals);
+            auto poly_coeff = polyfit(xvals, yvals, 3);
+```
+
+Then using the coefficients in polyeval function cte is computed.  
+
+```
+            double cte = polyeval(poly_coeff, 0) - 0;
+```
+
+Finally, orientation error (eψ) is computed as:
+
+```
+            double epsi = 0 - atan(3 * poly_coeff[3] * pow(0, 2) + 2 * 0 * poly_coeff[2] + poly_coeff[1]);
+```
+
+4. Model Predictive Control with Latency of 100 milli-seconds is introduced to make realistic scenario. To simulate the actuator dynamics this 100 ms delay is introduced from the time MPC computation and sent to simulator. Using the vehicle model, the initial state is computed for the time (`dt = 0.1`) equivalent of latency. Following code sets the initial state and supplied to MPC solve:
+
+```
+            double Lf = 2.67;
+            double dt = 0.1;
+
+            double delay_x = v * dt;
+            double delay_y = 0;
+            double delay_psi = -(v / Lf) * steer_value  * dt;
+            double delay_v = v + throttle_value * dt;
+            double delay_cte = cte + v * sin(epsi) * dt;
+            double delay_epsi = epsi - (v / Lf) * steer_value  * dt;
+
+            Eigen::VectorXd state(6);
+            state << delay_x, delay_y, delay_psi, delay_v, delay_cte, delay_epsi;
+            auto vars = mpc.Solve(state, poly_coeff);
+```
+
+Following video ![link](./videos/9_0.1_100ms_Latency.avi) shows vehicle maneuvering using MPC with 100 ms latency.
 
 ## Dependencies
 

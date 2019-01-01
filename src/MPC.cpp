@@ -37,6 +37,14 @@ size_t epsi_start = cte_start + N;
 size_t delta_start = epsi_start + N;
 size_t a_start = delta_start + N - 1;
 
+double cte_start_factor = 2500;
+double epsi_start_factor = 5000;
+double v_start_factor = 2;
+double delta_start_factor = 40;
+double a_start_factor = 50;
+double delta_start_diff_factor = 500;
+double a_start_diff_factor = 25;
+
 
 class FG_eval {
 public:
@@ -54,21 +62,21 @@ public:
         // The part of the cost based on the reference state.
 
         for (size_t t = 0; t < N; t++) {
-            fg[0] += 2500 * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
-            fg[0] += 5000 * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
-            fg[0] += 2 * CppAD::pow(vars[v_start + t] - ref_v, 2);
+            fg[0] += cte_start_factor * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
+            fg[0] += epsi_start_factor * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
+            fg[0] += v_start_factor * CppAD::pow(vars[v_start + t] - ref_v, 2);
         }
 
         // Minimize the use of actuators.
         for (size_t t = 0; t < N - 1; t++) {
-            fg[0] += 40 * CppAD::pow(vars[delta_start + t], 2);
-            fg[0] += 50 * CppAD::pow(vars[a_start + t], 2);
+            fg[0] += delta_start_factor * CppAD::pow(vars[delta_start + t], 2);
+            fg[0] += a_start_factor * CppAD::pow(vars[a_start + t], 2);
         }
 
         // Minimize the value gap between sequential actuations.
         for (size_t t = 0; t < N - 2; t++) {
-            fg[0] += 500 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-            fg[0] += 25 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+            fg[0] += delta_start_diff_factor * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+            fg[0] += a_start_diff_factor * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
         }
 
         //
@@ -263,7 +271,7 @@ std::vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     result.push_back(solution.x[delta_start]);
     result.push_back(solution.x[a_start]);
 
-    for (i = 1; i < N; i++)
+    for (i = 0; i < N; i++)
     {
         result.push_back(solution.x[x_start + i]);
         result.push_back(solution.x[y_start + i]);
